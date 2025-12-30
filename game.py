@@ -1,6 +1,8 @@
-from random import randrange
+import random
 
 import numpy as np
+
+rng = random.Random(0)
 
 COLORS = 6
 
@@ -117,8 +119,8 @@ class Game:
                     self.grid[self.piece_y+y][self.piece_x+x] = self.piece_data[y][x]
 
     def _new_piece(self):
-        self.piece_id = randrange(len(TETROMINOS))
-        color = 1+randrange(COLORS)
+        self.piece_id = rng.randrange(len(TETROMINOS))
+        color = 1+(self.score % COLORS)
         piece = TETROMINOS[self.piece_id]
         piece_size = len(piece)
         self.piece_data = [[piece[y][x]*color for x in range(piece_size)] for y in range(piece_size)]
@@ -159,7 +161,7 @@ class Game:
             else:
                 y -=1
 
-        self.score += lines * lines
+        self.score += 1+ self.width*(lines **2)
 
         return lines
     
@@ -185,54 +187,93 @@ class Game:
                 elif block_found:
                     col_holes += 1
             holes.append(col_holes)
-        
+
         # FEATURES AGRÉGÉES
         features = [
-            # 1. Hauteurs
-            max(heights) / self.height,                    # Max height normalisé
-            sum(heights) / (len(heights) * self.height),   # Avg height normalisé
-            np.std(heights) / self.height,                 # Écart-type hauteurs
-            
-            # 2. Trous
-            sum(holes),                                    # Total trous
-            max(holes) if holes else 0,                    # Max trous par colonne
-            
-            # 3. Bumpiness (irrégularité)
-            sum(abs(heights[i] - heights[i+1]) for i in range(len(heights)-1)) / self.height,
-            
-            # 4. Puits (colonnes très basses entourées de hautes)
-            sum(1 for i in range(1, len(heights)-1) 
-                if heights[i] < heights[i-1] - 2 and heights[i] < heights[i+1] - 2),
-            
-            # 5. Lignes presque complètes (potentiel de scoring)
+            # Hauteur max
+            #max(heights) / self.height,
+
+            # somme Hauteurs
+            sum(heights) / (self.width * self.height),
+
+            # somme Trous
+            sum(holes) / (self.width * self.height),
+
+            # Bumpiness total (normalisé)
+            sum(abs(heights[i] - heights[i+1]) for i in range(len(heights)-1)) / (self.width * self.height),
+
+            # Nb de Puits
+            sum(1 for i in range(1, len(heights)-1)
+                if heights[i] < heights[i-1] - 2 and heights[i] < heights[i+1] - 2) / self.width,
+
+            # Nb de Lignes presque complètes
             sum(1 for y in range(self.height)
-                if sum(1 for x in range(self.width) if self.grid[y][x] > 0) >= self.width - 2),
-            
-            # 6. Colonnes vides
-            sum(1 for h in heights if h == 0),
-            
-            # 7. Type de pièce (one-hot ou ID)
-            self.piece_id / 6.0  # Normalisé
+                if sum(1 for x in range(self.width) if self.grid[y][x] > 0) >= self.width - 2) / self.height,
+
+            # Colonnes vides
+            #sum(1 for h in heights if h == 0) / self.width,
+
         ]
-    
+
         return np.array(features, dtype=np.float32)
 
 
-    def get_possible_actions(self):
-        return (0,1,2,3,4)
-    
-    def exec_action(self, action:int):
+    def get_possible_placements(self):
+        """
+        Retourne tous les placements possibles (x, rotation) pour la pièce actuelle.
+        Chaque placement est un tuple (x, rotation) qui représente une position finale valide.
+        """
+        placements = []
 
-        res=True
-        if action==0:
-            pass
-        elif action==1:
-            res=self.translate(-1)
-        elif action==2:
-            res=self.translate(1)
-        elif action==3:
-            res=self.rotate()
-        elif action==4:
-            res=self.drop()
+        # Tester toutes les rotations possibles (0, 1, 2, 3)
+        max_rotations = 4 if self.piece_id > 1 else 1 if self.piece_id == 1 else 2  # La pièce carrée n'a qu'une rotation unique
+        for rotation in range(max_rotations):
+            # Créer une copie de la pièce avec cette rotation
+            piece = self.piece_data
+            for _ in range(rotation):# 0 fois = pas de rotation
+                piece_size = len(piece)
+                center_x = piece_size/2-0.5
+                center_y = piece_size/2-0.5
+                piece = [[piece[round(center_y-(x-center_x))][round(center_x+(y-center_y))]
+                          for x in range(piece_size)] for y in range(piece_size)]
 
-        return res
+            # Tester toutes les positions x possibles
+            for x in range(-len(piece), self.width + len(piece)):
+                # Vérifier si ce placement est valide (ne collide pas)
+                if not self._collides(piece, x, self.piece_y):
+                    # Simuler le drop pour voir où la pièce atterrirait
+                    y = self.piece_y
+                    while not self._collides(piece, x, y + 1):
+                        y += 1
+
+                    # Si le placement final est valide (au moins partiellement dans la grille)
+                    if y >= 0:
+                        placements.append((x, rotation))
+
+        return placements
+
+    def execute_placement(self, placement):
+        """
+        Exécute un placement complet : positionne la pièce et la drop.
+        placement: tuple (x, rotation)
+        """
+        x, rotation = placement
+
+        # Appliquer la rotation
+        for _ in range(rotation):
+            self.rotate()
+
+        # Positionner en x
+        target_x = x
+        while self.piece_x < target_x:
+            if not self.translate(1):
+                break
+        while self.piece_x > target_x:
+            if not self.translate(-1):
+                break
+
+        # Drop
+        self.drop()
+
+        # Effectuer le step (placement + clear lines + nouvelle pièce)
+        self.step()

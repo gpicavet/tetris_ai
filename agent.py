@@ -7,21 +7,19 @@ from collections import deque
 from game import Game
 
 class SimpleQNetwork(nn.Module):
-    """Réseau Q simple : état → Q-values pour toutes les actions."""
-    def __init__(self, state_size, num_actions, hidden_size=128):
+    """Réseau Q : état → Q-value unique pour évaluer la qualité d'un placement."""
+    def __init__(self, state_size, hidden_size=128):
         super().__init__()
         self.network = nn.Sequential(
             nn.Linear(state_size, hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size//2),
-            nn.ReLU(),
-            nn.Linear(hidden_size//2, num_actions)
+            nn.Linear(hidden_size, 1)  # UNE SEULE SORTIE : Q-value
         )
     
     def forward(self, state):
-        """Retourne les Q-values pour toutes les actions."""
+        """Retourne la Q-value pour un état donné."""
         return self.network(state)
 
 
@@ -41,59 +39,104 @@ class ReplayMemory:
 
 
 class SimpleDQNAgent:
-    def __init__(self, state_size, action_size, grid_width=12, learning_rate=0.0001, gamma=0.95, 
-                 epsilon=1.0, epsilon_decay=0.9995, epsilon_min=0.1, batch_size=128):
+    def __init__(self, state_size, learning_rate=0.0005, gamma=0.95,
+                 epsilon=1.0, epsilon_decay=0.9995, epsilon_min=0.05, batch_size=64):
         self.state_size = state_size
-        self.grid_width = grid_width
-        self.num_actions = action_size
         self.gamma = gamma
         self.epsilon = epsilon
         self.epsilon_decay = epsilon_decay
         self.epsilon_min = epsilon_min
         self.batch_size = batch_size
         
-        # Un seul réseau
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 
-                                  'mps' if torch.backends.mps.is_available() else 'cpu')
-        self.q_network = SimpleQNetwork(state_size, self.num_actions).to(self.device)
+        # Deux réseaux pour la stabilité (Target Network)
+        self.device = torch.device('cpu')
+        self.q_network = SimpleQNetwork(state_size, hidden_size=256).to(self.device)
+        self.target_network = SimpleQNetwork(state_size, hidden_size=256).to(self.device)
+        self.target_network.load_state_dict(self.q_network.state_dict())
+        self.target_network.eval()
+
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=learning_rate)
-        self.memory = ReplayMemory()
-        
+        self.memory = ReplayMemory(capacity=50000)
+
+        self.update_target_every = 500  # Fréquence Mise à jour du target network
+        self.steps = 0
+
         print(f"Device: {self.device}")
-        print(f"Actions: {self.num_actions} (grid_width={grid_width})")
-    
-    def get_best_action(self, game, placements, training=True):
-        """Choisit le meilleur placement."""
+        print(f"Architecture: état ({state_size}) → Q-value unique")
+
+    def get_placement_state(self, game, placement):
+        """
+        Calcule l'état résultant après un placement donné (sans l'exécuter réellement).
+        Retourne les features de l'état après le placement simulé.
+        """
+        import copy
+
+        # Créer une copie du jeu
+        sim_game = copy.deepcopy(game)
+
+        # Exécuter le placement sur la copie
+        x, rotation = placement
+
+        # Appliquer la rotation
+        for _ in range(rotation):
+            sim_game.rotate()
+
+        # Positionner en x
+        while sim_game.piece_x < x:
+            if not sim_game.translate(1):
+                break
+        while sim_game.piece_x > x:
+            if not sim_game.translate(-1):
+                break
+
+        # Drop
+        sim_game.drop()
+
+        # Placer la pièce (mais ne pas générer de nouvelle pièce)
+        sim_game._place_piece()
+        sim_game._clear_lines()
+
+        # Retourner les features de cet état
+        return sim_game.get_state_features()
+
+    def get_best_placement(self, game, placements, training=True):
+        """Choisit le meilleur placement en évaluant tous les placements possibles."""
         if not placements:
-            return None, None
-        
+            return None
+
         # Exploration aléatoire
         if training and random() < self.epsilon:
             idx = randrange(len(placements))
-            return idx, placements[idx]
-        
-        # Exploitation : évaluer toutes les Q-values
-        state = torch.FloatTensor(game.get_state_features()).unsqueeze(0).to(self.device)
-        
-        with torch.no_grad():
-            q_values = self.q_network(state).squeeze(0)  # (num_actions,)
-        
-        # Trouver le meilleur parmi les placements valides
-        best_idx = 0
+            return placements[idx]
+
+        # Exploitation : évaluer tous les placements
+        best_placement = None
         best_q = float('-inf')
-        
-        for idx, placement in enumerate(placements):
-            q = q_values[placement].item()
-            if q > best_q:
-                best_q = q
-                best_idx = idx
-        
-        return best_idx, placements[best_idx]
-    
-    def remember(self, state, placement, reward, next_state, done):
-        """Stocke une transition."""
-        self.memory.push((state, placement, reward, next_state, done))
-    
+
+        for placement in placements:
+            # Obtenir l'état résultant après ce placement
+            state = self.get_placement_state(game, placement)
+            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+
+            # Évaluer avec le réseau
+            with torch.no_grad():
+                q_value = self.q_network(state_tensor).item()
+
+            if q_value > best_q:
+                best_q = q_value
+                best_placement = placement
+
+        return best_placement
+
+    def remember(self, placement_state, reward, next_state, done):
+        """Stocke une transition.
+        placement_state: état après le placement (features utilisées pour Q)
+        reward: récompense obtenue
+        next_state: état après step (avec nouvelle pièce)
+        done: game over?
+        """
+        self.memory.push((placement_state, reward, next_state, done))
+
     def replay(self):
         """Entraîne le réseau sur un batch."""
         if len(self.memory) < self.batch_size:
@@ -101,25 +144,25 @@ class SimpleDQNAgent:
         
         # Échantillonner
         batch = self.memory.sample(self.batch_size)
-        states, actions, rewards, next_states, dones = zip(*batch)
-        
+        placement_states, rewards, next_states, dones = zip(*batch)
+
         # Convertir en tensors
-        states = torch.FloatTensor(np.array(states)).to(self.device)
-        actions = torch.LongTensor(actions).to(self.device)
+        placement_states = torch.FloatTensor(np.array(placement_states)).to(self.device)
         rewards = torch.FloatTensor(rewards).to(self.device)
         next_states = torch.FloatTensor(np.array(next_states)).to(self.device)
         dones = torch.FloatTensor(dones).to(self.device)
         
-        # Q-values actuelles
-        current_q = self.q_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
-        
-        # Q-values cibles
+        # Q-values actuelles pour les placements effectués
+        current_q = self.q_network(placement_states).squeeze(1)
+
+        # Q-values cibles avec le target network
+        # Pour next_state, on évalue directement (pas de max car 1 seule sortie)
         with torch.no_grad():
-            next_q = self.q_network(next_states).max(1)[0]
+            next_q = self.target_network(next_states).squeeze(1)
             target_q = rewards + (1 - dones) * self.gamma * next_q
         
         # Loss
-        loss = nn.SmoothL1Loss()(current_q, target_q)
+        loss = nn.MSELoss()(current_q, target_q)
         
         # Backpropagation
         self.optimizer.zero_grad()
@@ -127,6 +170,11 @@ class SimpleDQNAgent:
         nn.utils.clip_grad_norm_(self.q_network.parameters(), 1.0)
         self.optimizer.step()
         
+        # Mise à jour du target network
+        self.steps += 1
+        if self.steps % self.update_target_every == 0:
+            self.target_network.load_state_dict(self.q_network.state_dict())
+
         return loss.item()
     
     def decay_epsilon(self):
@@ -135,6 +183,7 @@ class SimpleDQNAgent:
     def save(self, filename='simple_dqn.pth'):
         torch.save({
             'q_network': self.q_network.state_dict(),
+            'target_network': self.target_network.state_dict(),
             'optimizer': self.optimizer.state_dict(),
             'epsilon': self.epsilon
         }, filename)
@@ -142,101 +191,113 @@ class SimpleDQNAgent:
     def load(self, filename='simple_dqn.pth'):
         checkpoint = torch.load(filename, map_location=self.device)
         self.q_network.load_state_dict(checkpoint['q_network'])
+        self.target_network.load_state_dict(checkpoint['target_network'])
         self.optimizer.load_state_dict(checkpoint['optimizer'])
         self.epsilon = checkpoint['epsilon']
 
 
-def calculate_reward(game):
-    """Calcule la récompense."""
+
+
+def calculate_reward(game, prev_score):
+    """
+    Calcule la récompense après un placement complet.
+    NOUVELLE APPROCHE : Le placement est déjà effectué, on évalue juste le résultat.
+    """
+    # 1. Pénalité game over (très forte)
     if game.game_over:
-        return -10
-    
-    reward = game.score * 50
-    
-    # Bonus survie
-    reward += 1
-    
+        return -10.0
+
+    reward = (game.score - prev_score)
+
     return reward
 
 
-def train(episodes=3000, max_steps=500):
-    """Entraîne l'agent."""
+def train(episodes=3000, max_steps=1000):
+    """Entraîne l'agent avec la nouvelle architecture basée sur les placements."""
     game = Game(12, 22)
     state_size = len(game.get_state_features())
-    action_size=5
-    
+
     agent = SimpleDQNAgent(
         state_size,
-        action_size,
-        grid_width=12,
-        learning_rate=0.0001,
+        learning_rate=0.0005,
         gamma=0.95,
         epsilon=1.0,
-        epsilon_decay=0.9995,
-        epsilon_min=0.1,
-        batch_size=128
+        epsilon_decay=0.999,
+        epsilon_min=0.05,
+        batch_size=512
     )
     
     scores = []
     losses = []
-    steps_per_episode = []
-    
+    pieces_per_episode = []
+    rewards_per_episode = []
+
     for episode in range(episodes):
         game = Game(12, 22)
-        state = game.get_state_features()
         episode_loss = []
-        steps = 0
-        
-        while not game.game_over and steps < max_steps:
-            # Obtenir placements possibles
-            actions = game.get_possible_actions()
-            if not actions:
+        episode_rewards = []
+        pieces = 0
+        prev_score = 0
+
+        while not game.game_over and pieces < max_steps:
+            # Obtenir tous les placements possibles pour la pièce courante
+            placements = game.get_possible_placements()
+            if not placements:
                 break
 
-            # Choisir placement
-            action_idx, action = agent.get_best_action(game, actions, training=True)
-            if action is None:
+            # Choisir le meilleur placement
+            placement = agent.get_best_placement(game, placements, training=True)
+            if placement is None:
                 break
             
-            # Exécuter
-            game.exec_action(action)
-            game.step()
+            # Obtenir l'état après ce placement (pour la Q-value)
+            placement_state = agent.get_placement_state(game, placement)
+
+            # Exécuter le placement
+            game.execute_placement(placement)
+            pieces += 1
+
+            # Obtenir le nouvel état (après placement et nouvelle pièce)
             next_state = game.get_state_features()
-            print(next_state)
-            
-            # Récompense
-            reward = calculate_reward(game)
-            
-            # Mémoriser
-            agent.remember(state, action, reward, next_state, game.game_over)
-             
-            # Suivant
-            state = next_state
-            steps += 1
-        
+
+            # Calculer la récompense
+            reward = calculate_reward(game, prev_score)
+            episode_rewards.append(reward)
+            prev_score = game.score
+
+            # Mémoriser la transition
+            agent.remember(placement_state, reward, next_state, game.game_over)
+
+            # Apprendre à chaque placement
+            loss = agent.replay()
+            if loss > 0:
+                episode_loss.append(loss)
+
+        if pieces == max_steps:
+            print(f"⚠️  Épisode {episode + 1} atteint le max de pièces ({max_steps})")
+
         # Décroissance epsilon
         agent.decay_epsilon()
-            
-        # Apprendre
-        loss = agent.replay()
-        if loss > 0:
-            episode_loss.append(loss)
-       
+
         # Stats
         scores.append(game.score)
-        steps_per_episode.append(steps)
+        pieces_per_episode.append(pieces)
         avg_loss = np.mean(episode_loss) if episode_loss else 0
         losses.append(avg_loss)
-        
+        total_reward = sum(episode_rewards)
+        rewards_per_episode.append(total_reward)
+
         # Affichage
         if (episode + 1) % 50 == 0:
             avg_score = np.mean(scores[-50:])
-            avg_steps = np.mean(steps_per_episode[-50:])
+            avg_pieces = np.mean(pieces_per_episode[-50:])
             max_score = max(scores[-50:])
-            
+            avg_reward = np.mean(rewards_per_episode[-50:])
+
             print(f"Episode {episode + 1}/{episodes} | "
                   f"Score: {avg_score:.2f} (max={max_score}) | "
-                  f"Steps: {avg_steps:.1f} | "
+                  f"Pièces: {avg_pieces:.1f} | "
+                  f"Reward: {avg_reward:.1f} | "
                   f"Loss: {avg_loss:.3f} | "
                   f"ε: {agent.epsilon:.3f} | "
                   f"Mem: {len(agent.memory)}")
@@ -245,58 +306,4 @@ def train(episodes=3000, max_steps=500):
         if (episode + 1) % 500 == 0:
             agent.save(f'save/checkpoint_{episode+1}.pth')
     
-    return agent, scores, losses, steps_per_episode
-
-
-if __name__ == "__main__":
-    
-    # Entraîner
-    agent, scores, losses, steps = train(episodes=3000)
-    
-    # Sauvegarder
-    agent.save('save/tetris_simple_dqn.pth')
-    print("\n✅ Modèle sauvegardé")
-    
-    # Graphiques
-    try:
-        import matplotlib.pyplot as plt
-        
-        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-        
-        # Scores
-        axes[0, 0].plot(scores, alpha=0.3)
-        if len(scores) >= 100:
-            axes[0, 0].plot(np.convolve(scores, np.ones(100)/100, mode='valid'), 
-                           linewidth=2, label='Moy. mobile')
-        axes[0, 0].set_title('Score')
-        axes[0, 0].legend()
-        axes[0, 0].grid(True, alpha=0.3)
-        
-        # Steps
-        axes[0, 1].plot(steps, alpha=0.3, color='green')
-        if len(steps) >= 100:
-            axes[0, 1].plot(np.convolve(steps, np.ones(100)/100, mode='valid'), 
-                           linewidth=2, color='darkgreen')
-        axes[0, 1].set_title('Steps par épisode')
-        axes[0, 1].grid(True, alpha=0.3)
-        
-        # Loss
-        axes[1, 0].plot(losses, alpha=0.5, color='red')
-        if len(losses) >= 50:
-            axes[1, 0].plot(np.convolve(losses, np.ones(50)/50, mode='valid'), 
-                           linewidth=2, color='darkred')
-        axes[1, 0].set_title('Loss')
-        axes[1, 0].grid(True, alpha=0.3)
-        
-        # Distribution
-        recent = scores[-500:] if len(scores) >= 500 else scores
-        axes[1, 1].hist(recent, bins=30, edgecolor='black', alpha=0.7)
-        axes[1, 1].axvline(np.mean(recent), color='red', linestyle='--', linewidth=2)
-        axes[1, 1].set_title('Distribution scores (500 derniers)')
-        axes[1, 1].grid(True, alpha=0.3, axis='y')
-        
-        plt.tight_layout()
-        plt.savefig('results.png', dpi=150)
-        print("📊 Graphiques sauvegardés")
-    except ImportError:
-        print("⚠️ matplotlib non installé")
+    return agent, scores, losses, pieces_per_episode
