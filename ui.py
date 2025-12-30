@@ -19,6 +19,7 @@ clock = pygame.time.Clock()
 
 Colors= [
      (0, 0, 0),
+    (200, 218, 200),
      (83, 218, 63),
      (254, 251, 52),
     (1, 237, 250),
@@ -63,22 +64,25 @@ screen_w = (thegame.width + 2) * BLOCK_SIZE + (thegame.width + 1) * BLOCK_GAP
 screen_h = (thegame.height + 1) * BLOCK_SIZE + (thegame.height) * BLOCK_GAP
 screen = pygame.display.set_mode((screen_w,screen_h))
 
-agent = SimpleDQNAgent(12+1+1+1+1, 4, learning_rate=0.0005)
-agent.load('dqn_checkpoint_1000.pth')
+agent = SimpleDQNAgent(len(thegame.get_state_features()))
+agent.load('save/checkpoint_1500.pth')
 
 while running:
-    state = thegame.get_state_features()
-    action_idx = agent.get_action(state, training=False)
-    action = agent.actions[action_idx]
-    
-    if action == 'left':
-        thegame.translate(-1)
-    elif action == 'right':
-        thegame.translate(1)
-    elif action == 'rotate':
-        thegame.rotate()
-    elif action == 'drop':
-        thegame.drop()
+    if not thegame.game_over and steptime > 0.3:
+        actions = thegame.get_possible_placements()
+        if not actions:
+            break
+
+        # Choisir action
+        action = agent.get_best_placement(thegame, actions, training=False)
+        if action is None:
+            break
+
+        # Exécuter
+        thegame.execute_placement(action)
+
+        steptime=0
+
 
     # poll for events
     # pygame.QUIT event means the user clicked X to close your window
@@ -104,9 +108,9 @@ while running:
             thegame.translate(1)
             key_time=0
 
-    if not thegame.game_over and steptime > 0.3:
-        thegame.step()
-        steptime=0
+    #if not thegame.game_over and steptime > 0.3:
+    #    thegame.step()
+    #    steptime=0
 
     screen.fill("black")
     draw(thegame)

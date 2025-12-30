@@ -15,9 +15,9 @@ class SimpleQNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
-#            nn.Linear(hidden_size, hidden_size),
-#            nn.ReLU(),
-            nn.Linear(hidden_size, 1)  # UNE SEULE SORTIE : Q-value
+            nn.Linear(hidden_size, hidden_size//2),
+            nn.ReLU(),
+            nn.Linear(hidden_size//2, 1)  # UNE SEULE SORTIE : Q-value
         )
     
     def forward(self, state):
@@ -52,8 +52,8 @@ class SimpleDQNAgent:
         
         # Deux réseaux pour la stabilité (Target Network)
         self.device = torch.device('cpu')
-        self.q_network = SimpleQNetwork(state_size, hidden_size=128).to(self.device)
-        self.target_network = SimpleQNetwork(state_size, hidden_size=128).to(self.device)
+        self.q_network = SimpleQNetwork(state_size, hidden_size=256).to(self.device)
+        self.target_network = SimpleQNetwork(state_size, hidden_size=256).to(self.device)
         self.target_network.load_state_dict(self.q_network.state_dict())
         self.target_network.eval()
 
@@ -64,7 +64,6 @@ class SimpleDQNAgent:
         self.steps = 0
 
         print(f"Device: {self.device}")
-        print(f"Architecture: état ({state_size}) → Q-value unique")
 
     def get_placement_state(self, game, placement):
         """
@@ -229,8 +228,8 @@ def train(episodes=3000, max_steps=1000):
         learning_rate=0.0005,
         gamma=0.95,
         epsilon=1.0,
-        epsilon_decay=0.995,
-        epsilon_min=0.05,
+        epsilon_decay=0.9995,
+        epsilon_min=0.1,
         batch_size=512
     )
     

@@ -6,13 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 if __name__ == "__main__":
-    print("🎮 Démarrage de l'entraînement avec PLACEMENTS...")
-    print("=" * 60)
-    print("📌 Nouvelle architecture:")
-    print("  - Le réseau évalue la qualité d'un PLACEMENT COMPLET")
-    print("  - 1 seule sortie Q-value (pas 5 actions)")
-    print("  - L'agent choisit parmi tous les placements possibles")
-    print("=" * 60)
 
     # Entraîner avec les nouveaux paramètres
     agent, scores, losses, pieces = train(episodes=3000, max_steps=500)
