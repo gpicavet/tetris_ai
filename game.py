@@ -4,8 +4,6 @@ import numpy as np
 
 rng = random.Random(0)
 
-COLORS = 6
-
 TETROMINOS = [
     [
         [0,1,0,0],
@@ -65,7 +63,7 @@ class Game:
     score: int
     game_over: bool
 
-    def __init__(self, width: int, height: int):
+    def __init__(self, width: int=10, height: int=22):
         self.width = width
         self.height = height
         self.grid = [[0] * width for _ in range(height)]
@@ -120,7 +118,7 @@ class Game:
 
     def _new_piece(self):
         self.piece_id = rng.randrange(len(TETROMINOS))
-        color = 1+(self.score % COLORS)
+        color = 1+self.piece_id
         piece = TETROMINOS[self.piece_id]
         piece_size = len(piece)
         self.piece_data = [[piece[y][x]*color for x in range(piece_size)] for y in range(piece_size)]
@@ -191,7 +189,7 @@ class Game:
         # FEATURES AGRÉGÉES
         features = [
             # Hauteur max
-            #max(heights) / self.height,
+            max(heights) / self.height,
 
             # somme Hauteurs
             sum(heights) / (self.width * self.height),
@@ -207,8 +205,8 @@ class Game:
                 if heights[i] < heights[i-1] - 2 and heights[i] < heights[i+1] - 2) / self.width,
 
             # Nb de Lignes presque complètes
-            sum(1 for y in range(self.height)
-                if sum(1 for x in range(self.width) if self.grid[y][x] > 0) >= self.width - 2) / self.height,
+            #sum(1 for y in range(self.height)
+            #    if sum(1 for x in range(self.width) if self.grid[y][x] > 0) >= self.width - 2) / self.height,
 
             # Colonnes vides
             #sum(1 for h in heights if h == 0) / self.width,

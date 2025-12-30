@@ -1,6 +1,6 @@
 import pygame
 from pygame import Rect
-from agent import DQNAgent
+from agent import SimpleDQNAgent
 
 from game import Game
 
@@ -8,10 +8,6 @@ BLOCK_SIZE = 24
 BLOCK_GAP = 4
 frame_time = 0.01
 
-#dirMap = {1: Direction.LEFT, 2: Direction.RIGHT, 0: Direction.UP}
-
-#model = LinearQNet(len(thegame.get_state()), 256, len(dirMap))
-#model.load("model.tch")
 
 # pygame setup
 pygame.init()
@@ -62,12 +58,12 @@ running = True
 game_over = False
 
 
-thegame = Game(12, 22)
+thegame = Game()
 screen_w = (thegame.width + 2) * BLOCK_SIZE + (thegame.width + 1) * BLOCK_GAP
 screen_h = (thegame.height + 1) * BLOCK_SIZE + (thegame.height) * BLOCK_GAP
 screen = pygame.display.set_mode((screen_w,screen_h))
 
-agent = DQNAgent(12+1+1+1+1, 4, learning_rate=0.0005)
+agent = SimpleDQNAgent(12+1+1+1+1, 4, learning_rate=0.0005)
 agent.load('dqn_checkpoint_1000.pth')
 
 while running:

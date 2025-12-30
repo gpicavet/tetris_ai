@@ -15,6 +15,8 @@ class SimpleQNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
+#            nn.Linear(hidden_size, hidden_size),
+#            nn.ReLU(),
             nn.Linear(hidden_size, 1)  # UNE SEULE SORTIE : Q-value
         )
     
@@ -50,13 +52,13 @@ class SimpleDQNAgent:
         
         # Deux réseaux pour la stabilité (Target Network)
         self.device = torch.device('cpu')
-        self.q_network = SimpleQNetwork(state_size, hidden_size=256).to(self.device)
-        self.target_network = SimpleQNetwork(state_size, hidden_size=256).to(self.device)
+        self.q_network = SimpleQNetwork(state_size, hidden_size=128).to(self.device)
+        self.target_network = SimpleQNetwork(state_size, hidden_size=128).to(self.device)
         self.target_network.load_state_dict(self.q_network.state_dict())
         self.target_network.eval()
 
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=learning_rate)
-        self.memory = ReplayMemory(capacity=50000)
+        self.memory = ReplayMemory(capacity=100000)
 
         self.update_target_every = 500  # Fréquence Mise à jour du target network
         self.steps = 0
@@ -198,7 +200,7 @@ class SimpleDQNAgent:
 
 
 
-def calculate_reward(game, prev_score):
+def calculate_reward(game, next_state, prev_score):
     """
     Calcule la récompense après un placement complet.
     NOUVELLE APPROCHE : Le placement est déjà effectué, on évalue juste le résultat.
@@ -207,14 +209,19 @@ def calculate_reward(game, prev_score):
     if game.game_over:
         return -10.0
 
-    reward = (game.score - prev_score)
+    d_score = (game.score - prev_score)
 
-    return reward
+    height = next_state[1]
+    holes = next_state[2]
+    bumpiness = next_state[3]
+
+
+    return d_score - 0.1 * height - 0.3 * holes - 0.1 * bumpiness
 
 
 def train(episodes=3000, max_steps=1000):
     """Entraîne l'agent avec la nouvelle architecture basée sur les placements."""
-    game = Game(12, 22)
+    game = Game()
     state_size = len(game.get_state_features())
 
     agent = SimpleDQNAgent(
@@ -222,7 +229,7 @@ def train(episodes=3000, max_steps=1000):
         learning_rate=0.0005,
         gamma=0.95,
         epsilon=1.0,
-        epsilon_decay=0.999,
+        epsilon_decay=0.995,
         epsilon_min=0.05,
         batch_size=512
     )
@@ -233,7 +240,7 @@ def train(episodes=3000, max_steps=1000):
     rewards_per_episode = []
 
     for episode in range(episodes):
-        game = Game(12, 22)
+        game = Game()
         episode_loss = []
         episode_rewards = []
         pieces = 0
@@ -261,7 +268,7 @@ def train(episodes=3000, max_steps=1000):
             next_state = game.get_state_features()
 
             # Calculer la récompense
-            reward = calculate_reward(game, prev_score)
+            reward = calculate_reward(game, next_state, prev_score)
             episode_rewards.append(reward)
             prev_score = game.score
 
