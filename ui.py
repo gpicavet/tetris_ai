@@ -4,18 +4,8 @@ from agent import SimpleDQNAgent
 
 from game import Game
 
-BLOCK_SIZE = 24
-BLOCK_GAP = 4
-frame_time = 0.01
-
-
-# pygame setup
-pygame.init()
-pygame.font.init() 
-my_font = pygame.font.SysFont('Comic Sans MS', 30)
-
-
-clock = pygame.time.Clock()
+BLOCK_SIZE = 30
+BLOCK_GAP = 2
 
 Colors= [
      (0, 0, 0),
@@ -39,46 +29,58 @@ def draw(game: Game):
     for i in range(game.height):
         pygame.Surface.fill(screen, "gray", to_rect([-1, i-1]))
         pygame.Surface.fill(screen, "gray", to_rect([game.width, i-1]))
+    #blocs
     for x in range(game.width):
         for y in range(game.height):
             if game.grid[y][x] > 0:
-                pygame.Surface.fill(screen, Colors[game.grid[y][x]], to_rect([x, y-1]))
+                pygame.Surface.fill(screen, 
+                                    Colors[game.grid[y][x]], 
+                                    to_rect([x, y-1]))
+    #current piece
     for x in range(len(game.piece_data)):
         for y in range(len(game.piece_data)):
             if game.piece_data[y][x] > 0:
-                pygame.Surface.fill(screen, Colors[game.piece_data[y][x]], to_rect([x+game.piece_x, y+game.piece_y-1]))
+                pygame.Surface.fill(screen, 
+                                    Colors[game.piece_data[y][x]], 
+                                    to_rect([x+game.piece_x, y+game.piece_y-1]))
 
 
+
+
+running = True
+
+thegame = Game()
+
+# pygame setup
+pygame.init()
+pygame.font.init() 
+clock = pygame.time.Clock()
+my_font = pygame.font.SysFont('Comic Sans MS', 30)
+screen_w = (thegame.width + 2) * BLOCK_SIZE + (thegame.width + 1) * BLOCK_GAP
+screen_h = (thegame.height + 1) * BLOCK_SIZE + (thegame.height) * BLOCK_GAP
+screen = pygame.display.set_mode((screen_w,screen_h))
+
+agent = SimpleDQNAgent(len(thegame.get_state_features()))
+agent.load('save/tetris_simple_dqn.pth')
 
 dt = 0
 time = 0
 steptime=0
 key_time=0
 
-running = True
-game_over = False
-
-
-thegame = Game()
-screen_w = (thegame.width + 2) * BLOCK_SIZE + (thegame.width + 1) * BLOCK_GAP
-screen_h = (thegame.height + 1) * BLOCK_SIZE + (thegame.height) * BLOCK_GAP
-screen = pygame.display.set_mode((screen_w,screen_h))
-
-agent = SimpleDQNAgent(len(thegame.get_state_features()))
-agent.load('save/checkpoint_1500.pth')
-
 while running:
-    if not thegame.game_over and steptime > 0.3:
+
+    # every step time, chosse the best possible placement
+    if not thegame.game_over and steptime > 0.2:
+        
         actions = thegame.get_possible_placements()
         if not actions:
             break
 
-        # Choisir action
         action = agent.get_best_placement(thegame, actions, training=False)
         if action is None:
             break
 
-        # Exécuter
         thegame.execute_placement(action)
 
         steptime=0

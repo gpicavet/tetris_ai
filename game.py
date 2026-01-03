@@ -2,7 +2,7 @@ import random
 
 import numpy as np
 
-rng = random.Random(0)
+rng = random.Random()
 
 TETROMINOS = [
     [
@@ -172,7 +172,7 @@ class Game:
                 if self.grid[y][x] > 0:
                     height = self.height - y
                     break
-            heights.append(height)
+            heights.append(height/ self.height)
         
         # Trous par colonne
         holes = []
@@ -184,34 +184,32 @@ class Game:
                     block_found = True
                 elif block_found:
                     col_holes += 1
-            holes.append(col_holes)
-
+            holes.append(col_holes/ self.height)
+        """
         # FEATURES AGRÉGÉES
         features = [
             # Hauteur max
-            max(heights) / self.height,
+            max(heights),
 
             # somme Hauteurs
-            sum(heights) / (self.width * self.height),
+            sum(heights) / (self.width),
 
             # somme Trous
-            sum(holes) / (self.width * self.height),
+            sum(holes) / (self.width),
 
             # Bumpiness total (normalisé)
-            sum(abs(heights[i] - heights[i+1]) for i in range(len(heights)-1)) / (self.width * self.height),
+            sum(abs(heights[i] - heights[i+1]) for i in range(len(heights)-1)) / (self.width),
 
             # Nb de Puits
             sum(1 for i in range(1, len(heights)-1)
                 if heights[i] < heights[i-1] - 2 and heights[i] < heights[i+1] - 2) / self.width,
 
-            # Nb de Lignes presque complètes
-            #sum(1 for y in range(self.height)
-            #    if sum(1 for x in range(self.width) if self.grid[y][x] > 0) >= self.width - 2) / self.height,
-
             # Colonnes vides
             #sum(1 for h in heights if h == 0) / self.width,
 
         ]
+        """
+        features = heights + holes
 
         return np.array(features, dtype=np.float32)
 
